@@ -3,6 +3,7 @@
 #include <WString.h>
 #include <vector>
 #include <string>
+#include <cstdint>
 #include <SdFat.h>
 
 class SDCardManager {
@@ -39,6 +40,9 @@ class SDCardManager {
   bool openFileForWrite(const char* moduleName, const std::string& path, FsFile& file);
   bool openFileForWrite(const char* moduleName, const String& path, FsFile& file);
   bool removeDir(const char* path);
+
+  uint64_t totalBytes();
+  uint64_t freeBytes();
 
  static SDCardManager& getInstance() { return instance; }
 

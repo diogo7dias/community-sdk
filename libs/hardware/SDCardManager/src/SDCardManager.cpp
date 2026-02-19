@@ -275,3 +275,17 @@ bool SDCardManager::removeDir(const char* path) {
 
   return sd.rmdir(path);
 }
+
+uint64_t SDCardManager::totalBytes() {
+  if (!initialized) return 0;
+  const uint32_t clusters = sd.clusterCount();
+  const uint32_t bytesPerCluster = sd.bytesPerCluster();
+  return static_cast<uint64_t>(clusters) * static_cast<uint64_t>(bytesPerCluster);
+}
+
+uint64_t SDCardManager::freeBytes() {
+  if (!initialized) return 0;
+  const uint32_t freeClusters = sd.freeClusterCount();
+  const uint32_t bytesPerCluster = sd.bytesPerCluster();
+  return static_cast<uint64_t>(freeClusters) * static_cast<uint64_t>(bytesPerCluster);
+}

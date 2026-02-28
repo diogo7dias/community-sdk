@@ -84,8 +84,7 @@ String SDCardManager::readFile(const char* path) {
 
 bool SDCardManager::readFileToStream(const char* path, Print& out, const size_t chunkSize) {
   if (!initialized) {
-    if (Serial) Serial.printf("[%lu] [SD] Path is not a directory\n", millis());
-    if (Serial) Serial.println("SDCardManager: not initialized; cannot read file");
+    if (Serial) Serial.printf("[%lu] [SD] readFileToStream: not initialized, cannot read %s\n", millis(), path);
     return false;
   }
 
@@ -115,8 +114,7 @@ size_t SDCardManager::readFileToBuffer(const char* path, char* buffer, const siz
   if (!buffer || bufferSize == 0)
     return 0;
   if (!initialized) {
-    if (Serial) Serial.printf("[%lu] [SD] Path is not a directory\n", millis());
-    if (Serial) Serial.println("SDCardManager: not initialized; cannot read file");
+    if (Serial) Serial.printf("[%lu] [SD] readFileToBuffer: not initialized, cannot read %s\n", millis(), path);
     buffer[0] = '\0';
     return 0;
   }
@@ -149,32 +147,34 @@ size_t SDCardManager::readFileToBuffer(const char* path, char* buffer, const siz
 
 bool SDCardManager::writeFile(const char* path, const String& content) {
   if (!initialized) {
-    if (Serial) Serial.printf("[%lu] [SD] Path is not a directory\n", millis());
-    if (Serial) Serial.println("SDCardManager: not initialized; cannot write file");
+    if (Serial) Serial.printf("[%lu] [SD] writeFile: not initialized, cannot write %s\n", millis(), path);
     return false;
   }
 
   // Remove existing file so we perform an overwrite rather than append
   if (sd.exists(path)) {
-    sd.remove(path);
+    if (!sd.remove(path)) {
+      if (Serial) Serial.printf("[%lu] [SD] writeFile: failed to remove existing %s before write\n", millis(), path);
+    }
   }
 
   FsFile f;
   if (!openFileForWrite("SD", path, f)) {
-    if (Serial) Serial.printf("[%lu] [SD] Path is not a directory\n", millis());
-    if (Serial) Serial.printf("Failed to open file for write: %s\n", path);
     return false;
   }
 
   const size_t written = f.print(content);
   f.close();
-  return written == content.length();
+  if (written != content.length()) {
+    if (Serial) Serial.printf("[%lu] [SD] writeFile: short write to %s (%u of %u bytes)\n", millis(), path, (unsigned)written, (unsigned)content.length());
+    return false;
+  }
+  return true;
 }
 
 bool SDCardManager::ensureDirectoryExists(const char* path) {
   if (!initialized) {
-    if (Serial) Serial.printf("[%lu] [SD] Path is not a directory\n", millis());
-    if (Serial) Serial.println("SDCardManager: not initialized; cannot create directory");
+    if (Serial) Serial.printf("[%lu] [SD] ensureDirectoryExists: not initialized, cannot create %s\n", millis(), path);
     return false;
   }
 
@@ -183,8 +183,6 @@ bool SDCardManager::ensureDirectoryExists(const char* path) {
     FsFile dir = sd.open(path);
     if (dir && dir.isDirectory()) {
       dir.close();
-    if (Serial) Serial.printf("[%lu] [SD] Path is not a directory\n", millis());
-      if (Serial) Serial.printf("Directory already exists: %s\n", path);
       return true;
     }
     dir.close();
@@ -192,12 +190,9 @@ bool SDCardManager::ensureDirectoryExists(const char* path) {
 
   // Create the directory
   if (sd.mkdir(path)) {
-    if (Serial) Serial.printf("[%lu] [SD] Path is not a directory\n", millis());
-    if (Serial) Serial.printf("Created directory: %s\n", path);
     return true;
   } else {
-    if (Serial) Serial.printf("[%lu] [SD] Path is not a directory\n", millis());
-    if (Serial) Serial.printf("Failed to create directory: %s\n", path);
+    if (Serial) Serial.printf("[%lu] [SD] ensureDirectoryExists: failed to create %s\n", millis(), path);
     return false;
   }
 }

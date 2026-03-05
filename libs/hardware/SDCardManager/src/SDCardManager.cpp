@@ -70,13 +70,17 @@ String SDCardManager::readFile(const char* path) {
     return {""};
   }
 
-  String content = "";
   constexpr size_t maxSize = 50000;  // Limit to 50KB
   size_t readSize = 0;
+  String content;
+  content.reserve(min((size_t)maxSize, (size_t)f.size()));
+  uint8_t buf[256];
   while (f.available() && readSize < maxSize) {
-    const char c = static_cast<char>(f.read());
-    content += c;
-    readSize++;
+    const size_t toRead = min(sizeof(buf), maxSize - readSize);
+    const int r = f.read(buf, toRead);
+    if (r <= 0) break;
+    content.concat(reinterpret_cast<const char*>(buf), r);
+    readSize += r;
   }
   f.close();
   return content;

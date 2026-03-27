@@ -102,6 +102,22 @@ void InputManager::update() {
       currentState = state;
     }
   }
+
+  // Suppress events until all buttons are released (used during activity transitions)
+  if (suppressUntilRelease) {
+    pressedEvents = 0;
+    releasedEvents = 0;
+    if (currentState == 0) {
+      suppressUntilRelease = false;
+    }
+  }
+}
+
+void InputManager::suppressUntilAllReleased() {
+  suppressUntilRelease = true;
+  pressedEvents = 0;
+  releasedEvents = 0;
+  buttonPressStart = millis();  // Reset held time so getHeldTime() starts fresh
 }
 
 bool InputManager::isPressed(const uint8_t buttonIndex) const {

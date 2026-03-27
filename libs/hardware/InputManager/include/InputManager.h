@@ -62,6 +62,14 @@ class InputManager {
    */
   unsigned long getHeldTime() const;
 
+  /**
+   * Suppresses all press/release events until every button is released.
+   * Also resets the held-time origin so getHeldTime() starts fresh.
+   * Use this during activity transitions to prevent stale input from
+   * leaking into the next screen.
+   */
+  void suppressUntilAllReleased();
+
   // Button indices
   static constexpr uint8_t BTN_BACK = 0;
   static constexpr uint8_t BTN_CONFIRM = 1;
@@ -92,6 +100,7 @@ class InputManager {
   unsigned long lastDebounceTime;
   unsigned long buttonPressStart;
   unsigned long buttonPressFinish;
+  bool suppressUntilRelease = false;
 
   static constexpr int NUM_BUTTONS_1 = 4;
   static const int ADC_RANGES_1[];

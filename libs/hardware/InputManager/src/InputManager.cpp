@@ -121,6 +121,7 @@ void InputManager::suppressUntilAllReleased() {
 }
 
 bool InputManager::isPressed(const uint8_t buttonIndex) const {
+  if (suppressUntilRelease) return false;
   return currentState & (1 << buttonIndex);
 }
 

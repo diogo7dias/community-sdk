@@ -29,6 +29,12 @@
 #define CMD_MASTER_ACTIVATION 0x20     // Master activation
 #define CTRL1_NORMAL 0x00              // Normal mode - compare RED vs BW for partial
 #define CTRL1_BYPASS_RED 0x40          // Bypass RED RAM (treat as 0) - for full refresh
+#define CTRL2_CLOCK_ON 0xC0            // Enable clock and analog (power-on bits)
+#define CTRL2_POWER_OFF 0x03           // Analog-off phase and clock-off bits
+#define CTRL2_MODE_FULL 0x34           // Display update mode: full refresh (GC waveform)
+#define CTRL2_MODE_HALF 0xD4           // Display update mode: half refresh (DU waveform)
+#define CTRL2_MODE_FAST 0x1C           // Display update mode: fast refresh (partial)
+#define CTRL2_MODE_FAST_CUSTOM 0x0C    // Display update mode: fast refresh with custom LUT
 
 // LUT and voltage settings
 #define CMD_WRITE_LUT 0x32       // Write LUT
@@ -594,24 +600,24 @@ void EInkDisplay::refreshDisplay(const RefreshMode mode, const bool turnOffScree
   // Enable counter and analog if not already on
   if (!isScreenOn) {
     isScreenOn = true;
-    displayMode |= 0xC0;  // Set CLOCK_ON and ANALOG_ON bits
+    displayMode |= CTRL2_CLOCK_ON;
   }
 
   // Turn off screen if requested
   if (turnOffScreen) {
     isScreenOn = false;
-    displayMode |= 0x03;  // Set ANALOG_OFF_PHASE and CLOCK_OFF bits
+    displayMode |= CTRL2_POWER_OFF;
   }
 
   if (mode == FULL_REFRESH) {
-    displayMode |= 0x34;
+    displayMode |= CTRL2_MODE_FULL;
   } else if (mode == HALF_REFRESH) {
     // Write high temp to the register for a faster refresh
     sendCommand(CMD_WRITE_TEMP);
     sendData(0x5A);
-    displayMode |= 0xD4;
+    displayMode |= CTRL2_MODE_HALF;
   } else {  // FAST_REFRESH
-    displayMode |= customLutActive ? 0x0C : 0x1C;
+    displayMode |= customLutActive ? CTRL2_MODE_FAST_CUSTOM : CTRL2_MODE_FAST;
   }
 
   // Power on and refresh display

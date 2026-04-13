@@ -244,9 +244,11 @@ bool SDCardManager::removeDir(const char* path) {
   // 1. Open the directory
   auto dir = sd.open(path);
   if (!dir) {
+    if (Serial) Serial.printf("[%lu] [SD] removeDir: failed to open '%s'\n", millis(), path);
     return false;
   }
   if (!dir.isDirectory()) {
+    if (Serial) Serial.printf("[%lu] [SD] removeDir: '%s' is not a directory\n", millis(), path);
     return false;
   }
 
@@ -266,13 +268,18 @@ bool SDCardManager::removeDir(const char* path) {
       }
     } else {
       if (!sd.remove(filePath.c_str())) {
+        if (Serial) Serial.printf("[%lu] [SD] removeDir: failed to remove file '%s'\n", millis(), filePath.c_str());
         return false;
       }
     }
     file = dir.openNextFile();
   }
 
-  return sd.rmdir(path);
+  const bool removed = sd.rmdir(path);
+  if (!removed) {
+    if (Serial) Serial.printf("[%lu] [SD] removeDir: failed to remove directory '%s'\n", millis(), path);
+  }
+  return removed;
 }
 
 uint64_t SDCardManager::totalBytes() {

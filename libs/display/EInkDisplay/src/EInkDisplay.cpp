@@ -347,7 +347,7 @@ void EInkDisplay::drawImage(const uint8_t* imageData, const uint16_t x, const ui
 void EInkDisplay::drawImageTransparent(const uint8_t* imageData, const uint16_t x, const uint16_t y, const uint16_t w, const uint16_t h,
                                      const bool fromProgmem) const {
   if (!frameBuffer) {
-    Serial.printf("[%lu]   ERROR: Frame buffer not allocated!\n", millis());
+    if (Serial) Serial.printf("[%lu]   ERROR: Frame buffer not allocated!\n", millis());
     return;
   }
 
@@ -372,7 +372,7 @@ void EInkDisplay::drawImageTransparent(const uint8_t* imageData, const uint16_t 
     }
   }
 
-  Serial.printf("[%lu]   Transparent image drawn to frame buffer\n", millis());
+  if (Serial) Serial.printf("[%lu]   Transparent image drawn to frame buffer\n", millis());
 }
 
 void EInkDisplay::writeRamBuffer(uint8_t ramBuffer, const uint8_t* data, uint32_t size) {

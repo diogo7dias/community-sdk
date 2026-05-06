@@ -62,15 +62,50 @@ uint8_t InputManager::getState() {
   }
 
   // Read power button (digital, active LOW)
-  if (digitalRead(POWER_BUTTON_PIN) == LOW) {
+  const int gpio3Value = digitalRead(POWER_BUTTON_PIN);
+  if (gpio3Value == LOW) {
     state |= (1 << BTN_POWER);
   }
+
+#if BUTTON_DEBUG_TRACE
+  static unsigned long lastTrace = 0;
+  const unsigned long traceNow = millis();
+  if (traceNow - lastTrace >= 20) {  // 50 Hz max
+    Serial.printf("[BTN] adc1=%4d adc2=%4d gpio3=%d state=0x%02X commit=0x%02X dt=%lums\n",
+                  adcValue1, adcValue2, gpio3Value, state, currentState, traceNow - lastTrace);
+    lastTrace = traceNow;
+  }
+#endif
 
   return state;
 }
 
 void InputManager::update() {
   const unsigned long currentTime = millis();
+
+#if BUTTON_DEBUG_CADENCE
+  static uint16_t buckets[8] = {0};  // <10ms, 10-20, 20-50, 50-100, 100-200, 200-500, 500-1000, >1000
+  static unsigned long lastUpdate = 0;
+  static unsigned long lastReport = 0;
+  const unsigned long cadenceDt = currentTime - lastUpdate;
+  lastUpdate = currentTime;
+  int b = (cadenceDt < 10)   ? 0
+          : (cadenceDt < 20)  ? 1
+          : (cadenceDt < 50)  ? 2
+          : (cadenceDt < 100) ? 3
+          : (cadenceDt < 200) ? 4
+          : (cadenceDt < 500) ? 5
+          : (cadenceDt < 1000) ? 6
+                               : 7;
+  buckets[b]++;
+  if (currentTime - lastReport > 5000) {
+    Serial.printf("[BTN-CADENCE] <10:%u 10-20:%u 20-50:%u 50-100:%u 100-200:%u 200-500:%u 500-1k:%u >1k:%u\n",
+                  buckets[0], buckets[1], buckets[2], buckets[3],
+                  buckets[4], buckets[5], buckets[6], buckets[7]);
+    lastReport = currentTime;
+  }
+#endif
+
   const uint8_t state = getState();
 
   // Always clear events first

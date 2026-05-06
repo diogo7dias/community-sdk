@@ -44,18 +44,29 @@ int InputManager::getButtonFromADC(const int adcValue, const int ranges[], const
   return -1;
 }
 
+int InputManager::readAdcAveraged(const uint8_t pin) {
+  // Mean of ADC_OVERSAMPLE (=8) consecutive analogRead() calls. Cheap and
+  // sufficient to suppress the ±50-100 LSB jitter on ESP32-C3 that was
+  // pushing single-sample reads across resistor-ladder bucket boundaries.
+  int sum = 0;
+  for (int i = 0; i < ADC_OVERSAMPLE; i++) {
+    sum += analogRead(pin);
+  }
+  return sum / ADC_OVERSAMPLE;
+}
+
 uint8_t InputManager::getState() {
   uint8_t state = 0;
 
   // Read GPIO1 buttons
-  const int adcValue1 = analogRead(BUTTON_ADC_PIN_1);
+  const int adcValue1 = readAdcAveraged(BUTTON_ADC_PIN_1);
   const int button1 = getButtonFromADC(adcValue1, ADC_RANGES_1, NUM_BUTTONS_1);
   if (button1 >= 0) {
     state |= (1 << button1);
   }
 
   // Read GPIO2 buttons
-  const int adcValue2 = analogRead(BUTTON_ADC_PIN_2);
+  const int adcValue2 = readAdcAveraged(BUTTON_ADC_PIN_2);
   const int button2 = getButtonFromADC(adcValue2, ADC_RANGES_2, NUM_BUTTONS_2);
   if (button2 >= 0) {
     state |= (1 << (button2 + 4));

@@ -92,6 +92,7 @@ class InputManager {
 
  private:
   int getButtonFromADC(int adcValue, const int ranges[], int numButtons);
+  static int readAdcAveraged(uint8_t pin);
 
   uint8_t currentState;
   uint8_t lastState;
@@ -109,7 +110,12 @@ class InputManager {
   static const int ADC_RANGES_2[];
 
   static constexpr int ADC_NO_BUTTON = 3800;
-  static constexpr unsigned long DEBOUNCE_DELAY = 5;
+  // Bumped 5 → 15 ms together with 8-sample ADC oversampling in getState().
+  // Rationale: ESP32-C3 ADC jitter (~50-100 LSB) caused single-sample reads
+  // to flicker between resistor-ladder buckets at the edges of a press,
+  // resetting lastDebounceTime and never letting the press commit.
+  static constexpr unsigned long DEBOUNCE_DELAY = 15;
+  static constexpr int ADC_OVERSAMPLE = 8;
 
   static const char* BUTTON_NAMES[];
 };

@@ -116,7 +116,11 @@ class InputManager {
   // and the extra latency was perceptible during menu/page navigation.
   // Mechanical bounce on these tactile buttons is well under 5 ms.
   static constexpr unsigned long DEBOUNCE_DELAY = 5;
-  static constexpr int ADC_OVERSAMPLE = 8;
+  // Dropped 8 → 1 after issue #138: averaging was eating legitimate press
+  // edges in the reader (page-turn taps needed extra force to register).
+  // Match upstream / inx single-sample behaviour. If resistor-ladder bucket
+  // flicker (#136) returns on real hardware, raise back to 4 first, not 8.
+  static constexpr int ADC_OVERSAMPLE = 1;
 
   static const char* BUTTON_NAMES[];
 };

@@ -110,11 +110,12 @@ class InputManager {
   static const int ADC_RANGES_2[];
 
   static constexpr int ADC_NO_BUTTON = 3800;
-  // Bumped 5 → 15 ms together with 8-sample ADC oversampling in getState().
-  // Rationale: ESP32-C3 ADC jitter (~50-100 LSB) caused single-sample reads
-  // to flicker between resistor-ladder buckets at the edges of a press,
-  // resetting lastDebounceTime and never letting the press commit.
-  static constexpr unsigned long DEBOUNCE_DELAY = 15;
+  // Restored to upstream 5 ms after issue #138 (sluggish navigation).
+  // The 15 ms bump from #136 was redundant once 8-sample ADC oversampling
+  // (below) eliminated the resistor-ladder bucket flicker at press edges,
+  // and the extra latency was perceptible during menu/page navigation.
+  // Mechanical bounce on these tactile buttons is well under 5 ms.
+  static constexpr unsigned long DEBOUNCE_DELAY = 5;
   static constexpr int ADC_OVERSAMPLE = 8;
 
   static const char* BUTTON_NAMES[];

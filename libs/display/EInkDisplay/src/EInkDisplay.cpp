@@ -1204,9 +1204,19 @@ void EInkDisplay::copyGrayscaleLsbBuffers(const uint8_t *lsbBuffer) {
       memcpy(rowA, rowB, displayWidthBytes);
       memcpy(rowB, rowTmp, displayWidthBytes);
     }
+    // X3 grayscale polarity fix: the UC81xx interprets the 2-bit plane
+    // encoding with inverted black/white vs the X4 SSD1677 the encoding was
+    // authored for, so grayscale images (sleep wallpapers, covers, embedded
+    // images) render inverted on the X3. Flipping BOTH plane bits inverts the
+    // image — pv -> (3 - pv) is exactly XOR of the LSB and MSB plane bits — so
+    // XOR each plane byte with 0xFF before streaming. X3-only; the X4 RAM-write
+    // path at the tail of this function is untouched. Restored after the send
+    // so the caller's framebuffer is left byte-identical.
+    for (uint32_t i = 0; i < bufferSize; i++) buf[i] ^= 0xFF;
     sendCommand(CMD_X3_DTM1);
     sendData(buf, static_cast<uint16_t>(bufferSize));
     sendCommand(CMD_X3_DATA_STOP); // no refresh follows; commit DTM1
+    for (uint32_t i = 0; i < bufferSize; i++) buf[i] ^= 0xFF;
     for (uint16_t top = 0, bot = displayHeight - 1; top < bot; top++, bot--) {
       uint8_t *rowA = buf + static_cast<uint32_t>(top) * displayWidthBytes;
       uint8_t *rowB = buf + static_cast<uint32_t>(bot) * displayWidthBytes;
@@ -1241,9 +1251,14 @@ void EInkDisplay::copyGrayscaleMsbBuffers(const uint8_t *msbBuffer) {
       memcpy(rowA, rowB, displayWidthBytes);
       memcpy(rowB, rowTmp, displayWidthBytes);
     }
+    // X3 grayscale polarity fix (MSB/DTM2 plane) — see copyGrayscaleLsbBuffers.
+    // Flip both planes so the 4-level image is not rendered black<->white
+    // inverted on the UC81xx. Restored after the send.
+    for (uint32_t i = 0; i < bufferSize; i++) buf[i] ^= 0xFF;
     sendCommand(CMD_X3_DTM2);
     sendData(buf, static_cast<uint16_t>(bufferSize));
     sendCommand(CMD_X3_DATA_STOP); // no refresh follows; commit DTM2
+    for (uint32_t i = 0; i < bufferSize; i++) buf[i] ^= 0xFF;
     for (uint16_t top = 0, bot = displayHeight - 1; top < bot; top++, bot--) {
       uint8_t *rowA = buf + static_cast<uint32_t>(top) * displayWidthBytes;
       uint8_t *rowB = buf + static_cast<uint32_t>(bot) * displayWidthBytes;

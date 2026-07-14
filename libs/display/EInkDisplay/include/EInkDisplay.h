@@ -97,6 +97,28 @@ class EInkDisplay {
 #endif
 
   void displayBuffer(RefreshMode mode = FAST_REFRESH, bool turnOffScreen = false);
+
+  // Async FAST refresh: start the waveform and return while the panel runs it
+  // (~0.4-0.5s), instead of blocking in pollBusy. finishRefresh() joins and
+  // performs the deferred post-refresh RAM sync. Returns true when the refresh
+  // was started detached; falls back to a synchronous displayBuffer(FAST) and
+  // returns false when the panel state demands a stronger pass (screen off,
+  // grayscale active, X3 resync pending).
+  //
+  // CONTRACT while a refresh is pending:
+  //  - The frame buffer must NOT be modified. The deferred sync writes it to
+  //    the panel's "previous frame" RAM after the waveform; if it changed, the
+  //    next differential mis-drives. Overlap SD/CPU work, not drawing.
+  //  - The SPI bus may be used by OTHER devices (SD card): the display holds
+  //    CS high during the waveform. Display SPI traffic must join first —
+  //    every public method here does so via ensureRefreshDone().
+  bool displayBufferAsync();
+  // Join a pending async refresh (no-op when none). Blocks until the waveform
+  // completes, then restores the differential RAM invariants.
+  void finishRefresh();
+  // True while an async refresh is pending and the panel is still driving.
+  bool refreshBusyNow();
+  bool refreshPending() const { return _asyncRefreshPending; }
   // EXPERIMENTAL: Windowed update - display only a rectangular region
   void displayWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool turnOffScreen = false);
   void displayGrayBuffer(bool turnOffScreen = false, const unsigned char* lut = nullptr, bool factoryMode = false);
@@ -132,6 +154,13 @@ class EInkDisplay {
  private:
   // Internal geometry setter used by setDisplayX3().
   void setDisplayDimensions(uint16_t width, uint16_t height);
+
+  // Async refresh state; see displayBufferAsync().
+  bool _asyncRefreshPending = false;
+  // Join a pending async refresh before any display SPI traffic.
+  void ensureRefreshDone() {
+    if (_asyncRefreshPending) finishRefresh();
+  }
 
   // Pin configuration
   int8_t _sclk, _mosi, _cs, _dc, _rst, _busy;

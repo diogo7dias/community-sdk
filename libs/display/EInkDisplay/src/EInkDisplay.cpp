@@ -496,6 +496,7 @@ void EInkDisplay::begin() {
   inGrayscaleMode = false;
   drawGrayscale = false;
   _asyncRefreshPending = false; // stale pending state cannot survive a re-init
+  _asyncWindowPending = false;
 
   frameBuffer = frameBuffer0;
 #ifndef EINK_DISPLAY_SINGLE_BUFFER_MODE
@@ -1432,24 +1433,53 @@ void EInkDisplay::finishRefresh() {
   if (!_asyncRefreshPending)
     return;
   _asyncRefreshPending = false;
+  const bool windowed = _asyncWindowPending;
+  _asyncWindowPending = false;
 
   if (_x3Mode) {
-    waitForRefresh(" X3_DRF(async)");
+    waitForRefresh(windowed ? " X3_DRF(asyncwin)" : " X3_DRF(async)");
     // Deferred DTM1 sync: the frame buffer still holds the frame the
     // waveform just displayed (contract: not modified while pending), so the
-    // next fast differential diffs against the true previous frame.
-    sendPlaneX3(CMD_X3_DTM1, frameBuffer, false);
-    sendCommand(CMD_X3_DATA_STOP);
+    // next fast differential diffs against the true previous frame. In the
+    // windowed case only the window region changed - the rest of DTM1
+    // already matches - and PTL mode is still active from the trigger, so
+    // the plane write stays windowed and PTOUT closes it.
+    if (windowed) {
+      sendWindowPlaneX3(CMD_X3_DTM1, _asyncWinX, _asyncWinY, _asyncWinW,
+                        _asyncWinH);
+      sendCommand(CMD_X3_DATA_STOP);
+      sendCommand(CMD_X3_PARTIAL_OUT);
+    } else {
+      sendPlaneX3(CMD_X3_DTM1, frameBuffer, false);
+      sendCommand(CMD_X3_DATA_STOP);
+    }
     _x3GrayState.lsbValid = false;
     _x3RedRamSynced = true;
     return;
   }
 
-  waitWhileBusy("fast(async)");
+  waitWhileBusy(windowed ? "window(async)" : "fast(async)");
 #ifdef EINK_DISPLAY_SINGLE_BUFFER_MODE
-  // Deferred RED RAM sync (same invariant displayBuffer() keeps).
-  setRamArea(0, 0, displayWidth, displayHeight);
-  writeRamBuffer(CMD_WRITE_RAM_RED, frameBuffer, bufferSize);
+  // Deferred RED RAM sync (same invariant displayBuffer() keeps). Windowed:
+  // re-extract the region from the (frozen) frame buffer and sync only it.
+  if (windowed) {
+    const uint16_t windowWidthBytes = _asyncWinW / 8;
+    const uint32_t windowBufferSize =
+        static_cast<uint32_t>(windowWidthBytes) * _asyncWinH;
+    std::vector<uint8_t> windowBuffer(windowBufferSize);
+    for (uint16_t row = 0; row < _asyncWinH; row++) {
+      const uint32_t srcOffset =
+          static_cast<uint32_t>(_asyncWinY + row) * displayWidthBytes +
+          (_asyncWinX / 8);
+      memcpy(&windowBuffer[static_cast<uint32_t>(row) * windowWidthBytes],
+             &frameBuffer[srcOffset], windowWidthBytes);
+    }
+    setRamArea(_asyncWinX, _asyncWinY, _asyncWinW, _asyncWinH);
+    writeRamBuffer(CMD_WRITE_RAM_RED, windowBuffer.data(), windowBufferSize);
+  } else {
+    setRamArea(0, 0, displayWidth, displayHeight);
+    writeRamBuffer(CMD_WRITE_RAM_RED, frameBuffer, bufferSize);
+  }
 #endif
 }
 
@@ -1682,6 +1712,129 @@ void EInkDisplay::displayBuffer(RefreshMode mode, const bool turnOffScreen) {
 // Displays only a rectangular region of the frame buffer, preserving the rest
 // of the screen. Requirements: x and w must be byte-aligned (multiples of 8
 // pixels)
+void EInkDisplay::enterPartialWindowX3(uint16_t x, uint16_t y, uint16_t w,
+                                       uint16_t h) {
+  // PTL Y is in gate space (see writeGrayscalePlaneStrip): logical row y
+  // lives at gate (H-1-y), so the logical range [y .. y+h-1] occupies gates
+  // [H-1-(y+h-1) .. H-1-y], and window rows are emitted bottom-first
+  // (highest logical row first). X is not mirrored.
+  const uint16_t xs = x;                                // already byte-aligned
+  const uint16_t xe = static_cast<uint16_t>(x + w - 1); // ends on a byte edge
+  const uint16_t yEndLogical = static_cast<uint16_t>(y + h - 1);
+  const uint16_t gateYStart =
+      static_cast<uint16_t>((displayHeight - 1) - yEndLogical);
+  const uint16_t gateYEnd = static_cast<uint16_t>((displayHeight - 1) - y);
+  const uint8_t win[9] = {static_cast<uint8_t>(xs >> 8),
+                          static_cast<uint8_t>(xs & 0xFF),
+                          static_cast<uint8_t>(xe >> 8),
+                          static_cast<uint8_t>(xe & 0xFF),
+                          static_cast<uint8_t>(gateYStart >> 8),
+                          static_cast<uint8_t>(gateYStart & 0xFF),
+                          static_cast<uint8_t>(gateYEnd >> 8),
+                          static_cast<uint8_t>(gateYEnd & 0xFF),
+                          0x01};
+  sendCommand(CMD_X3_PARTIAL_IN);
+  sendCommandDataX3(CMD_X3_PARTIAL_WINDOW, win, 9);
+}
+
+void EInkDisplay::sendWindowPlaneX3(uint8_t ramCmd, uint16_t x, uint16_t y,
+                                    uint16_t w, uint16_t h) {
+  const uint16_t winBytes = static_cast<uint16_t>(w / 8);
+  const uint32_t rowOffset = static_cast<uint32_t>(x / 8);
+  const int yEnd = static_cast<int>(y) + static_cast<int>(h) - 1;
+  sendCommand(ramCmd);
+  SPI.beginTransaction(spiSettings);
+  digitalWrite(_dc, HIGH);
+  digitalWrite(_cs, LOW);
+  for (int row = yEnd; row >= static_cast<int>(y); row--)
+    SPI.writeBytes(frameBuffer +
+                       static_cast<uint32_t>(row) * displayWidthBytes +
+                       rowOffset,
+                   winBytes);
+  digitalWrite(_cs, HIGH);
+  SPI.endTransaction();
+}
+
+bool EInkDisplay::displayWindowAsync(uint16_t x, uint16_t y, uint16_t w,
+                                     uint16_t h) {
+  ensureRefreshDone();
+
+  // Same detach conditions as displayBufferAsync(), plus displayWindow()'s
+  // geometry validation. Anything that cannot run as a clean detached FAST
+  // window falls back to the synchronous path (which itself falls back to a
+  // full displayBuffer when the panel state demands a stronger pass).
+  const bool boundsOk = frameBuffer && w > 0 && h > 0 &&
+                        (x + w <= displayWidth) && (y + h <= displayHeight) &&
+                        (x % 8 == 0) && (w % 8 == 0);
+  bool canDetach = boundsOk && isScreenOn && !inGrayscaleMode;
+  if (_x3Mode) {
+    canDetach = canDetach && _x3RedRamSynced && !_x3ForceFullSyncNext &&
+                _x3InitialFullSyncsRemaining == 0 && !_x3GrayState.lsbValid;
+  }
+  if (!canDetach) {
+    displayWindow(x, y, w, h, /*turnOffScreen=*/false);
+    return false;
+  }
+
+  if (_x3Mode) {
+    // Mirrors displayWindow()'s X3 PTL branch, minus the busy wait and the
+    // DTM1 window sync + PTOUT (deferred to finishRefresh()). isScreenOn is
+    // guaranteed by canDetach, so DRF fires without a POWER_ON preamble.
+    if (Serial)
+      Serial.printf("[%lu]   X3_OEM_FAST (PTL window, async)\n", millis());
+    _x3GrayState.lastBaseWasPartial = true;
+    loadLutBankX3WithCdi(0x29, 0x07, lut_x3_vcom_fast, lut_x3_ww_fast,
+                         lut_x3_bw_fast, lut_x3_wb_fast, lut_x3_bb_fast);
+    enterPartialWindowX3(x, y, w, h);
+    sendWindowPlaneX3(CMD_X3_DTM2, x, y, w, h);
+    if (Serial)
+      Serial.printf("[%lu]   X3_OEM_TRIGGER=DRF (window async)\n", millis());
+    sendCommand(CMD_X3_DISPLAY_REFRESH);
+  } else {
+    // Mirrors displayWindow()'s X4 branch, minus the busy wait and the
+    // single-buffer RED window sync (deferred to finishRefresh()).
+    const uint16_t windowWidthBytes = w / 8;
+    const uint32_t windowBufferSize =
+        static_cast<uint32_t>(windowWidthBytes) * h;
+    std::vector<uint8_t> windowBuffer(windowBufferSize);
+    for (uint16_t row = 0; row < h; row++) {
+      const uint32_t srcOffset =
+          static_cast<uint32_t>(y + row) * displayWidthBytes + (x / 8);
+      memcpy(&windowBuffer[static_cast<uint32_t>(row) * windowWidthBytes],
+             &frameBuffer[srcOffset], windowWidthBytes);
+    }
+    setRamArea(x, y, w, h);
+    writeRamBuffer(CMD_WRITE_RAM_BW, windowBuffer.data(), windowBufferSize);
+#ifndef EINK_DISPLAY_SINGLE_BUFFER_MODE
+    std::vector<uint8_t> previousWindowBuffer(windowBufferSize);
+    for (uint16_t row = 0; row < h; row++) {
+      const uint32_t srcOffset =
+          static_cast<uint32_t>(y + row) * displayWidthBytes + (x / 8);
+      memcpy(&previousWindowBuffer[static_cast<uint32_t>(row) *
+                                   windowWidthBytes],
+             &frameBufferActive[srcOffset], windowWidthBytes);
+    }
+    writeRamBuffer(CMD_WRITE_RAM_RED, previousWindowBuffer.data(),
+                   windowBufferSize);
+#endif
+    sendCommand(CMD_DISPLAY_UPDATE_CTRL1);
+    sendData(CTRL1_NORMAL);
+    sendCommand(CMD_DISPLAY_UPDATE_CTRL2);
+    sendData(customLutActive ? 0x0C : 0x1C);
+    if (Serial)
+      Serial.printf("[%lu]   Master activation (async window)\n", millis());
+    sendCommand(CMD_MASTER_ACTIVATION);
+  }
+
+  _asyncWinX = x;
+  _asyncWinY = y;
+  _asyncWinW = w;
+  _asyncWinH = h;
+  _asyncWindowPending = true;
+  _asyncRefreshPending = true;
+  return true;
+}
+
 void EInkDisplay::displayWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
                                 const bool turnOffScreen) {
   ensureRefreshDone();
@@ -1728,52 +1881,17 @@ void EInkDisplay::displayWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
       return;
     }
 
-    // PTL Y is in gate space (see writeGrayscalePlaneStrip): logical row y
-    // lives at gate (H-1-y), so the logical range [y .. y+h-1] occupies gates
-    // [H-1-(y+h-1) .. H-1-y], and window rows are emitted bottom-first
-    // (highest logical row first). X is not mirrored.
-    const uint16_t xs = x;                                // already byte-aligned
-    const uint16_t xe = static_cast<uint16_t>(x + w - 1); // ends on a byte edge
-    const uint16_t yEndLogical = static_cast<uint16_t>(y + h - 1);
-    const uint16_t gateYStart = static_cast<uint16_t>((displayHeight - 1) - yEndLogical);
-    const uint16_t gateYEnd = static_cast<uint16_t>((displayHeight - 1) - y);
-    const uint8_t win[9] = {static_cast<uint8_t>(xs >> 8),
-                            static_cast<uint8_t>(xs & 0xFF),
-                            static_cast<uint8_t>(xe >> 8),
-                            static_cast<uint8_t>(xe & 0xFF),
-                            static_cast<uint8_t>(gateYStart >> 8),
-                            static_cast<uint8_t>(gateYStart & 0xFF),
-                            static_cast<uint8_t>(gateYEnd >> 8),
-                            static_cast<uint8_t>(gateYEnd & 0xFF),
-                            0x01};
-    const uint16_t winBytes = static_cast<uint16_t>(w / 8);
-    const uint32_t rowOffset = static_cast<uint32_t>(xs / 8);
-
-    // Streams the window region of the frame buffer into one DTM plane,
-    // rows in gate order (bottom-first), one CS burst.
-    const auto sendWindowPlane = [&](uint8_t ramCmd) {
-      sendCommand(ramCmd);
-      SPI.beginTransaction(spiSettings);
-      digitalWrite(_dc, HIGH);
-      digitalWrite(_cs, LOW);
-      for (int row = static_cast<int>(yEndLogical); row >= static_cast<int>(y); row--)
-        SPI.writeBytes(frameBuffer + static_cast<uint32_t>(row) * displayWidthBytes + rowOffset, winBytes);
-      digitalWrite(_cs, HIGH);
-      SPI.endTransaction();
-    };
-
     if (Serial)
       Serial.printf("[%lu]   X3_OEM_FAST (PTL window)\n", millis());
     _x3GrayState.lastBaseWasPartial = true;
     loadLutBankX3WithCdi(0x29, 0x07, lut_x3_vcom_fast, lut_x3_ww_fast,
                          lut_x3_bw_fast, lut_x3_wb_fast, lut_x3_bb_fast);
-    sendCommand(CMD_X3_PARTIAL_IN);
-    sendCommandDataX3(CMD_X3_PARTIAL_WINDOW, win, 9);
-    sendWindowPlane(CMD_X3_DTM2);
+    enterPartialWindowX3(x, y, w, h);
+    sendWindowPlaneX3(CMD_X3_DTM2, x, y, w, h);
     triggerRefreshX3(turnOffScreen, "(window)");
     // Keep the DTM1 == displayed-frame invariant for the window region; the
     // rest of DTM1 already matches (nothing outside the window changed).
-    sendWindowPlane(CMD_X3_DTM1);
+    sendWindowPlaneX3(CMD_X3_DTM1, x, y, w, h);
     sendCommand(CMD_X3_DATA_STOP);
     sendCommand(CMD_X3_PARTIAL_OUT);
     _x3GrayState.lsbValid = false;

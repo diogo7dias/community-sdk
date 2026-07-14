@@ -121,6 +121,14 @@ class EInkDisplay {
   bool refreshPending() const { return _asyncRefreshPending; }
   // EXPERIMENTAL: Windowed update - display only a rectangular region
   void displayWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool turnOffScreen = false);
+  // Async windowed FAST refresh: displayBufferAsync()'s contract applied to
+  // displayWindow()'s region drive (X3: PTL partial mode; X4: RAM window).
+  // Starts the waveform and returns; finishRefresh() joins and performs the
+  // deferred window-region "previous frame" RAM sync. Falls back to the
+  // synchronous displayWindow() path and returns false when the panel state
+  // cannot be windowed or detached (screen off, grayscale, pending resyncs,
+  // bad bounds).
+  bool displayWindowAsync(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
   void displayGrayBuffer(bool turnOffScreen = false, const unsigned char* lut = nullptr, bool factoryMode = false);
 
   void refreshDisplay(RefreshMode mode = FAST_REFRESH, bool turnOffScreen = false);
@@ -157,6 +165,10 @@ class EInkDisplay {
 
   // Async refresh state; see displayBufferAsync().
   bool _asyncRefreshPending = false;
+  // Pending refresh is windowed (displayWindowAsync()): the deferred post-
+  // refresh sync rewrites only this rect. X3 additionally exits PTL mode.
+  bool _asyncWindowPending = false;
+  uint16_t _asyncWinX = 0, _asyncWinY = 0, _asyncWinW = 0, _asyncWinH = 0;
   // Join a pending async refresh before any display SPI traffic.
   void ensureRefreshDone() {
     if (_asyncRefreshPending) finishRefresh();
@@ -250,6 +262,13 @@ class EInkDisplay {
   // Power-on if needed, trigger refresh, optionally power-off. The `tag`
   // string is included verbatim in busy-wait log lines.
   void triggerRefreshX3(bool turnOffScreen, const char* tag);
+
+  // X3 PTL partial-mode helpers (see displayWindow()). Coordinates are the
+  // logical byte-aligned window; the PTL descriptor is built in gate space.
+  void enterPartialWindowX3(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+  // Stream the window region of the frame buffer into one DTM plane, rows in
+  // gate order (bottom-first), one CS burst. PTL window must already be set.
+  void sendWindowPlaneX3(uint8_t ramCmd, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 };
 
 // Factory LUTs extracted from firmware V3.1.9_CH_X4_0117.bin.

@@ -1747,14 +1747,71 @@ void EInkDisplay::displayWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
   }
 
   if (_x3Mode) {
-    // X3 uses a different command set for windowed RAM addressing (0x91/0x90/
-    // 0x92) than X4 (setRamArea + CMD_WRITE_RAM_*). Rather than maintain a
-    // second X3-specific partial-update implementation, route X3 through the
-    // shared displayBuffer pipeline. Visual result is equivalent; only
-    // difference is the unchanged region of the screen also refreshes.
-    // displayBuffer already handles inGrayscaleMode revert and the wake-from-
-    // off HALF refresh policy.
-    displayBuffer(FAST_REFRESH, turnOffScreen);
+    // X3 (UC81xx) windowed FAST refresh via PTL partial mode, the same
+    // machinery preconditionGrayscale and writeGrayscalePlaneStrip already
+    // use on this panel. Only a clean fast-differential state can be
+    // windowed: anything needing a stronger pass (screen off, grayscale
+    // residue, pending resyncs) falls back to the full displayBuffer
+    // pipeline, exactly as before.
+    const bool canWindow = isScreenOn && !inGrayscaleMode && _x3RedRamSynced &&
+                           !_x3ForceFullSyncNext &&
+                           _x3InitialFullSyncsRemaining == 0 &&
+                           !_x3GrayState.lsbValid;
+    if (!canWindow) {
+      displayBuffer(FAST_REFRESH, turnOffScreen);
+      return;
+    }
+
+    // PTL Y is in gate space (see writeGrayscalePlaneStrip): logical row y
+    // lives at gate (H-1-y), so the logical range [y .. y+h-1] occupies gates
+    // [H-1-(y+h-1) .. H-1-y], and window rows are emitted bottom-first
+    // (highest logical row first). X is not mirrored.
+    const uint16_t xs = x;                                // already byte-aligned
+    const uint16_t xe = static_cast<uint16_t>(x + w - 1); // ends on a byte edge
+    const uint16_t yEndLogical = static_cast<uint16_t>(y + h - 1);
+    const uint16_t gateYStart = static_cast<uint16_t>((displayHeight - 1) - yEndLogical);
+    const uint16_t gateYEnd = static_cast<uint16_t>((displayHeight - 1) - y);
+    const uint8_t win[9] = {static_cast<uint8_t>(xs >> 8),
+                            static_cast<uint8_t>(xs & 0xFF),
+                            static_cast<uint8_t>(xe >> 8),
+                            static_cast<uint8_t>(xe & 0xFF),
+                            static_cast<uint8_t>(gateYStart >> 8),
+                            static_cast<uint8_t>(gateYStart & 0xFF),
+                            static_cast<uint8_t>(gateYEnd >> 8),
+                            static_cast<uint8_t>(gateYEnd & 0xFF),
+                            0x01};
+    const uint16_t winBytes = static_cast<uint16_t>(w / 8);
+    const uint32_t rowOffset = static_cast<uint32_t>(xs / 8);
+
+    // Streams the window region of the frame buffer into one DTM plane,
+    // rows in gate order (bottom-first), one CS burst.
+    const auto sendWindowPlane = [&](uint8_t ramCmd) {
+      sendCommand(ramCmd);
+      SPI.beginTransaction(spiSettings);
+      digitalWrite(_dc, HIGH);
+      digitalWrite(_cs, LOW);
+      for (int row = static_cast<int>(yEndLogical); row >= static_cast<int>(y); row--)
+        SPI.writeBytes(frameBuffer + static_cast<uint32_t>(row) * displayWidthBytes + rowOffset, winBytes);
+      digitalWrite(_cs, HIGH);
+      SPI.endTransaction();
+    };
+
+    if (Serial)
+      Serial.printf("[%lu]   X3_OEM_FAST (PTL window)\n", millis());
+    _x3GrayState.lastBaseWasPartial = true;
+    loadLutBankX3WithCdi(0x29, 0x07, lut_x3_vcom_fast, lut_x3_ww_fast,
+                         lut_x3_bw_fast, lut_x3_wb_fast, lut_x3_bb_fast);
+    sendCommand(CMD_X3_PARTIAL_IN);
+    sendCommandDataX3(CMD_X3_PARTIAL_WINDOW, win, 9);
+    sendWindowPlane(CMD_X3_DTM2);
+    triggerRefreshX3(turnOffScreen, "(window)");
+    // Keep the DTM1 == displayed-frame invariant for the window region; the
+    // rest of DTM1 already matches (nothing outside the window changed).
+    sendWindowPlane(CMD_X3_DTM1);
+    sendCommand(CMD_X3_DATA_STOP);
+    sendCommand(CMD_X3_PARTIAL_OUT);
+    _x3GrayState.lsbValid = false;
+    _x3RedRamSynced = true;
     return;
   }
 

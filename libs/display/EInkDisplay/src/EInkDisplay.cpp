@@ -544,8 +544,17 @@ void EInkDisplay::begin() {
   if (Serial)
     Serial.printf("[%lu]   GPIO pins configured\n", millis());
 
-  // Reset display
-  resetDisplay();
+  // Reset display. A staged boot reset (resetStart/resetPump) replaces the
+  // blocking sequence; begin() only tops up whatever settle time the boot
+  // work did not already cover.
+  if (_resetStage == 0) {
+    resetDisplay();
+  } else {
+    resetFinishBlocking();
+    if (Serial)
+      Serial.printf("[%lu]   Staged display reset complete\n", millis());
+  }
+  _resetStage = 0; // consumed; a re-begin() resets the panel itself
 
   // Initialize display controller
   initDisplayController();
@@ -572,6 +581,42 @@ void EInkDisplay::resetDisplay() {
   if (_x3Mode) {
     delay(50);
     return;
+  }
+}
+
+void EInkDisplay::resetStart() {
+  if (_resetStage != 0)
+    return;
+  pinMode(_rst, OUTPUT);
+  digitalWrite(_rst, HIGH);
+  _resetStage = 1;
+  _resetStageAtMs = millis();
+}
+
+void EInkDisplay::resetPump() {
+  // Mirrors resetDisplay()'s sequence: HIGH 20ms, LOW 2ms, HIGH 20ms, plus
+  // the X3 50ms settle tail folded into the last stage. Each stage advances
+  // only once its settle time has elapsed; never blocks.
+  while (_resetStage >= 1 && _resetStage <= 3) {
+    const unsigned long need = (_resetStage == 1)   ? 20
+                               : (_resetStage == 2) ? 2
+                                                    : (_x3Mode ? 70 : 20);
+    if (millis() - _resetStageAtMs < need)
+      return;
+    if (_resetStage == 1)
+      digitalWrite(_rst, LOW);
+    else if (_resetStage == 2)
+      digitalWrite(_rst, HIGH);
+    _resetStage++;
+    _resetStageAtMs = millis();
+  }
+}
+
+void EInkDisplay::resetFinishBlocking() {
+  while (_resetStage >= 1 && _resetStage <= 3) {
+    resetPump();
+    if (_resetStage <= 3)
+      delay(1);
   }
 }
 

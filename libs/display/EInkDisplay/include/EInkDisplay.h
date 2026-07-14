@@ -142,6 +142,16 @@ class EInkDisplay {
   // each) regardless of the requested mode.
   void skipInitialResync();
 
+  // Staged boot-time hardware reset. The panel reset sequence is ~42ms (X4)
+  // / ~92ms (X3) of pure pin toggles and settle delays with no bus traffic.
+  // resetStart() fires the first toggle and returns; resetPump() advances the
+  // sequence whenever the current stage's settle time has elapsed (never
+  // blocks). Call them around other boot work (SD mount, settings load) so
+  // the settle time elapses for free; begin() blocks out any remainder and
+  // skips its own resetDisplay(). Only meaningful before begin().
+  void resetStart();
+  void resetPump();
+
   // debug function
   void grayscaleRevert();
 
@@ -173,6 +183,14 @@ class EInkDisplay {
   void ensureRefreshDone() {
     if (_asyncRefreshPending) finishRefresh();
   }
+
+  // Staged boot reset state; see resetStart()/resetPump().
+  // 0 = idle (begin() runs its own resetDisplay()), 1-3 = stage in
+  // progress, 4 = sequence complete.
+  uint8_t _resetStage = 0;
+  unsigned long _resetStageAtMs = 0;
+  // Block until the staged reset sequence completes.
+  void resetFinishBlocking();
 
   // Pin configuration
   int8_t _sclk, _mosi, _cs, _dc, _rst, _busy;

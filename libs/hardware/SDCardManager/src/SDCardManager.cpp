@@ -131,7 +131,10 @@ size_t SDCardManager::readFileToBuffer(const char* path, char* buffer, const siz
   size_t total = 0;
 
   while (f.available() && total < maxToRead) {
-    constexpr size_t chunk = 64;
+    // 512 = one FAT sector. The read goes straight into the caller's buffer, so a
+    // larger chunk just means fewer SdFat read() calls (fewer SD SPI round-trips)
+    // with no extra RAM. Was 64, which split every read into needless transactions.
+    constexpr size_t chunk = 512;
     const size_t want = maxToRead - total;
     const size_t readLen = (want < chunk) ? want : chunk;
     const int r = f.read(buffer + total, readLen);

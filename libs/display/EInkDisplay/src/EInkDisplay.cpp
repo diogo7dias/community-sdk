@@ -682,32 +682,33 @@ void EInkDisplay::sendCommandDataByteX3(uint8_t cmd, uint8_t d0, uint8_t d1) {
   sendCommandDataX3(cmd, d, 2);
 }
 
-void EInkDisplay::sendPlaneX3(uint8_t ramCmd, uint8_t *buf, bool invert) {
+void EInkDisplay::sendPlaneX3(uint8_t ramCmd, const uint8_t *buf,
+                              bool invert) {
   // The X3 controller scans gates upward (UD=1), so the first byte sent
   // maps to the bottom-left pixel. Our framebuffer stores row 0 at offset
-  // 0 (top), so we Y-flip rows before sending and restore after. Avoids
-  // allocating a transposed copy.
-  auto flipRowsInPlace = [&](uint8_t *p) {
-    uint8_t rowTmp[128];
-    for (uint16_t top = 0, bot = displayHeight - 1; top < bot; top++, bot--) {
-      uint8_t *rowA = p + static_cast<uint32_t>(top) * displayWidthBytes;
-      uint8_t *rowB = p + static_cast<uint32_t>(bot) * displayWidthBytes;
-      memcpy(rowTmp, rowA, displayWidthBytes);
-      memcpy(rowA, rowB, displayWidthBytes);
-      memcpy(rowB, rowTmp, displayWidthBytes);
-    }
-  };
-  auto invertBuffer = [&](uint8_t *p) {
-    auto *w = reinterpret_cast<uint32_t *>(p);
-    for (uint32_t i = 0; i < bufferSize / 4; i++)
-      w[i] = ~w[i];
-  };
-  if (invert) invertBuffer(buf);
-  flipRowsInPlace(buf);
+  // 0 (top), so rows are streamed bottom-first straight from the buffer.
+  // (This used to Y-flip the whole buffer in place before and after the
+  // send - four ~50KB memcpy passes per plane write. See speed-plan 6.5.)
   sendCommand(ramCmd);
-  sendData(buf, static_cast<uint16_t>(bufferSize));
-  flipRowsInPlace(buf);
-  if (invert) invertBuffer(buf);
+  SPI.beginTransaction(spiSettings);
+  digitalWrite(_dc, HIGH);
+  digitalWrite(_cs, LOW);
+  if (!invert) {
+    for (int row = static_cast<int>(displayHeight) - 1; row >= 0; row--)
+      SPI.writeBytes(buf + static_cast<uint32_t>(row) * displayWidthBytes,
+                     displayWidthBytes);
+  } else {
+    uint8_t rowBuf[128];
+    for (int row = static_cast<int>(displayHeight) - 1; row >= 0; row--) {
+      const uint8_t *srcRow =
+          buf + static_cast<uint32_t>(row) * displayWidthBytes;
+      for (uint16_t i = 0; i < displayWidthBytes; i++)
+        rowBuf[i] = ~srcRow[i];
+      SPI.writeBytes(rowBuf, displayWidthBytes);
+    }
+  }
+  digitalWrite(_cs, HIGH);
+  SPI.endTransaction();
 }
 
 void EInkDisplay::fillPlaneX3(uint8_t ramCmd, uint8_t fillByte) {
@@ -1206,28 +1207,10 @@ void EInkDisplay::copyGrayscaleLsbBuffers(const uint8_t *lsbBuffer) {
   }
 
   if (_x3Mode) {
-    // X3 grayscale: write LSB plane raw to "old" RAM (DTM1).
-    // Y-flip in-place, bulk send, Y-flip back. The const_cast is safe because
-    // the buffer is fully restored before returning.
-    auto *buf = const_cast<uint8_t *>(lsbBuffer);
-    uint8_t rowTmp[128];
-    for (uint16_t top = 0, bot = displayHeight - 1; top < bot; top++, bot--) {
-      uint8_t *rowA = buf + static_cast<uint32_t>(top) * displayWidthBytes;
-      uint8_t *rowB = buf + static_cast<uint32_t>(bot) * displayWidthBytes;
-      memcpy(rowTmp, rowA, displayWidthBytes);
-      memcpy(rowA, rowB, displayWidthBytes);
-      memcpy(rowB, rowTmp, displayWidthBytes);
-    }
-    sendCommand(CMD_X3_DTM1);
-    sendData(buf, static_cast<uint16_t>(bufferSize));
+    // X3 grayscale: write LSB plane raw to "old" RAM (DTM1). sendPlaneX3
+    // streams rows bottom-first without touching the caller's buffer.
+    sendPlaneX3(CMD_X3_DTM1, lsbBuffer, false);
     sendCommand(CMD_X3_DATA_STOP); // no refresh follows; commit DTM1
-    for (uint16_t top = 0, bot = displayHeight - 1; top < bot; top++, bot--) {
-      uint8_t *rowA = buf + static_cast<uint32_t>(top) * displayWidthBytes;
-      uint8_t *rowB = buf + static_cast<uint32_t>(bot) * displayWidthBytes;
-      memcpy(rowTmp, rowA, displayWidthBytes);
-      memcpy(rowA, rowB, displayWidthBytes);
-      memcpy(rowB, rowTmp, displayWidthBytes);
-    }
     _x3GrayState.lsbValid = true;
     return;
   }
@@ -1247,25 +1230,8 @@ void EInkDisplay::copyGrayscaleMsbBuffers(const uint8_t *msbBuffer) {
     }
 
     // X3 grayscale: write MSB plane raw to "new" RAM (DTM2).
-    auto *buf = const_cast<uint8_t *>(msbBuffer);
-    uint8_t rowTmp[128];
-    for (uint16_t top = 0, bot = displayHeight - 1; top < bot; top++, bot--) {
-      uint8_t *rowA = buf + static_cast<uint32_t>(top) * displayWidthBytes;
-      uint8_t *rowB = buf + static_cast<uint32_t>(bot) * displayWidthBytes;
-      memcpy(rowTmp, rowA, displayWidthBytes);
-      memcpy(rowA, rowB, displayWidthBytes);
-      memcpy(rowB, rowTmp, displayWidthBytes);
-    }
-    sendCommand(CMD_X3_DTM2);
-    sendData(buf, static_cast<uint16_t>(bufferSize));
+    sendPlaneX3(CMD_X3_DTM2, msbBuffer, false);
     sendCommand(CMD_X3_DATA_STOP); // no refresh follows; commit DTM2
-    for (uint16_t top = 0, bot = displayHeight - 1; top < bot; top++, bot--) {
-      uint8_t *rowA = buf + static_cast<uint32_t>(top) * displayWidthBytes;
-      uint8_t *rowB = buf + static_cast<uint32_t>(bot) * displayWidthBytes;
-      memcpy(rowTmp, rowA, displayWidthBytes);
-      memcpy(rowA, rowB, displayWidthBytes);
-      memcpy(rowB, rowTmp, displayWidthBytes);
-    }
     return;
   }
   setRamArea(0, 0, displayWidth, displayHeight);

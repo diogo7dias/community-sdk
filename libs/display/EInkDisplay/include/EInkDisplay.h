@@ -231,7 +231,7 @@ class EInkDisplay {
   // Bulk-write a pixel plane to one of the DTM RAM commands. Y-flips rows
   // in-place (X3 controller scans gates upward), optionally inverts bits
   // before sending, then restores the buffer.
-  void sendPlaneX3(uint8_t ramCmd, uint8_t* buf, bool invert);
+  void sendPlaneX3(uint8_t ramCmd, const uint8_t* buf, bool invert);
   // Fill an entire RAM plane with a single byte (e.g., 0xFF for white).
   // Streams a small row buffer repeatedly so the framebuffer isn't touched.
   void fillPlaneX3(uint8_t ramCmd, uint8_t fillByte);

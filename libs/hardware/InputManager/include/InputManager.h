@@ -62,6 +62,12 @@ class InputManager {
    */
   unsigned long getHeldTime() const;
 
+  /**
+   * millis() of the most recent transition from no-buttons to any-button
+   * pressed. Lets diagnostics measure press-edge to handled latency.
+   */
+  unsigned long getLastPressStart() const { return buttonPressStart; }
+
     /**
    * Returns the time the power button has been held
    *

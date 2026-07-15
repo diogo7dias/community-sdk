@@ -179,6 +179,9 @@ class EInkDisplay {
   // refresh sync rewrites only this rect. X3 additionally exits PTL mode.
   bool _asyncWindowPending = false;
   uint16_t _asyncWinX = 0, _asyncWinY = 0, _asyncWinW = 0, _asyncWinH = 0;
+  // millis() at the async trigger command; lets the join tell "refresh done"
+  // from "BUSY not asserted yet" without pollBusy's 1 s edge-wait penalty.
+  unsigned long _asyncTriggerAtMs = 0;
   // Join a pending async refresh before any display SPI traffic.
   void ensureRefreshDone() {
     if (_asyncRefreshPending) finishRefresh();
@@ -242,6 +245,8 @@ class EInkDisplay {
   // The per-panel polling logic therefore stays gated; consolidation here
   // is the function body only.
   void pollBusy(const char* comment, const char* completeWord);
+  // Join-side BUSY wait for a detached X3 refresh (see finishRefresh()).
+  void pollBusyAsyncJoinX3(const char* comment);
   void initDisplayController();
 
   // Low-level display operations

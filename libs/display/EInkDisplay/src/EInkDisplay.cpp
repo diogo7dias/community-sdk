@@ -664,6 +664,33 @@ void EInkDisplay::pollBusy(const char *comment, const char *completeWord) {
                   millis() - start);
 }
 
+void EInkDisplay::pollBusyAsyncJoinX3(const char *comment) {
+  // Joining a detached refresh on X3 (BUSY active LOW). The controller
+  // asserts BUSY within a few ms of the DRF trigger, so if we are joining
+  // at least kAssertGraceMs after the trigger and BUSY reads idle, the
+  // refresh has already completed. The generic pollBusy cannot know that:
+  // it would burn its full 1 s HIGH->LOW edge window on every late join -
+  // one dead second per detached refresh, paid by the first draw call of
+  // the next frame.
+  constexpr unsigned long kAssertGraceMs = 50;
+  const unsigned long start = millis();
+  while (digitalRead(_busy) == HIGH) {
+    if (millis() - _asyncTriggerAtMs >= kAssertGraceMs)
+      return; // BUSY never asserted this late = refresh already done
+    delay(1);
+  }
+  // BUSY is LOW: refresh still in flight, wait it out (same 30 s ceiling as
+  // pollBusy).
+  while (digitalRead(_busy) == LOW) {
+    delay(1);
+    if (millis() - start > 30000)
+      break;
+  }
+  if (comment && Serial)
+    Serial.printf("[%lu]   Refresh done: %s (%lu ms)\n", millis(), comment,
+                  millis() - start);
+}
+
 void EInkDisplay::sendCommand(uint8_t command) {
   SPI.beginTransaction(spiSettings);
   digitalWrite(_dc, LOW); // Command mode
@@ -1452,6 +1479,7 @@ bool EInkDisplay::displayBufferAsync() {
     if (Serial)
       Serial.printf("[%lu]   X3_OEM_TRIGGER=DRF (async)\n", millis());
     sendCommand(CMD_X3_DISPLAY_REFRESH);
+    _asyncTriggerAtMs = millis();
   } else {
     // Mirrors displayBuffer()+refreshDisplay()'s FAST path, minus the busy
     // wait and the single-buffer RED RAM post-sync (deferred).
@@ -1482,7 +1510,7 @@ void EInkDisplay::finishRefresh() {
   _asyncWindowPending = false;
 
   if (_x3Mode) {
-    waitForRefresh(windowed ? " X3_DRF(asyncwin)" : " X3_DRF(async)");
+    pollBusyAsyncJoinX3(windowed ? " X3_DRF(asyncwin)" : " X3_DRF(async)");
     // Deferred DTM1 sync: the frame buffer still holds the frame the
     // waveform just displayed (contract: not modified while pending), so the
     // next fast differential diffs against the true previous frame. In the
@@ -1835,6 +1863,7 @@ bool EInkDisplay::displayWindowAsync(uint16_t x, uint16_t y, uint16_t w,
     if (Serial)
       Serial.printf("[%lu]   X3_OEM_TRIGGER=DRF (window async)\n", millis());
     sendCommand(CMD_X3_DISPLAY_REFRESH);
+    _asyncTriggerAtMs = millis();
   } else {
     // Mirrors displayWindow()'s X4 branch, minus the busy wait and the
     // single-buffer RED window sync (deferred to finishRefresh()).

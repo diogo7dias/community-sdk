@@ -629,6 +629,8 @@ void EInkDisplay::pollBusy(const char *comment, const char *completeWord) {
   if (!_x3Mode) {
     // X4: BUSY held HIGH while busy, drops LOW when done.
     while (digitalRead(_busy) == HIGH) {
+      if (_busyWaitPump)
+        _busyWaitPump();
       delay(1);
       if (millis() - start > 30000)
         break;
@@ -644,6 +646,8 @@ void EInkDisplay::pollBusy(const char *comment, const char *completeWord) {
     // skip the completion log line.
     bool sawLow = false;
     while (digitalRead(_busy) == HIGH) {
+      if (_busyWaitPump)
+        _busyWaitPump();
       delay(1);
       if (millis() - start > 1000)
         break;
@@ -651,6 +655,8 @@ void EInkDisplay::pollBusy(const char *comment, const char *completeWord) {
     if (digitalRead(_busy) == LOW) {
       sawLow = true;
       while (digitalRead(_busy) == LOW) {
+        if (_busyWaitPump)
+          _busyWaitPump();
         delay(1);
         if (millis() - start > 30000)
           break;
@@ -677,11 +683,15 @@ void EInkDisplay::pollBusyAsyncJoinX3(const char *comment) {
   while (digitalRead(_busy) == HIGH) {
     if (millis() - _asyncTriggerAtMs >= kAssertGraceMs)
       return; // BUSY never asserted this late = refresh already done
+    if (_busyWaitPump)
+      _busyWaitPump();
     delay(1);
   }
   // BUSY is LOW: refresh still in flight, wait it out (same 30 s ceiling as
   // pollBusy).
   while (digitalRead(_busy) == LOW) {
+    if (_busyWaitPump)
+      _busyWaitPump();
     delay(1);
     if (millis() - start > 30000)
       break;

@@ -119,6 +119,15 @@ class EInkDisplay {
   // True while an async refresh is pending and the panel is still driving.
   bool refreshBusyNow();
   bool refreshPending() const { return _asyncRefreshPending; }
+
+  // Optional callback invoked roughly once per millisecond from inside the
+  // BUSY-pin wait loops (sync refresh waits and async joins). Lets the
+  // firmware keep polling button input while a waveform blocks the caller:
+  // the buttons are ADC-polled with no interrupt path, so a quick tap that
+  // starts and ends inside a multi-second blocking refresh would otherwise
+  // leave no trace. The callback runs on whatever task is doing the wait -
+  // the installer must handle task filtering itself.
+  void setBusyWaitPump(void (*pump)()) { _busyWaitPump = pump; }
   // EXPERIMENTAL: Windowed update - display only a rectangular region
   void displayWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool turnOffScreen = false);
   // Async windowed FAST refresh: displayBufferAsync()'s contract applied to
@@ -182,6 +191,8 @@ class EInkDisplay {
   // millis() at the async trigger command; lets the join tell "refresh done"
   // from "BUSY not asserted yet" without pollBusy's 1 s edge-wait penalty.
   unsigned long _asyncTriggerAtMs = 0;
+  // See setBusyWaitPump().
+  void (*_busyWaitPump)() = nullptr;
   // Join a pending async refresh before any display SPI traffic.
   void ensureRefreshDone() {
     if (_asyncRefreshPending) finishRefresh();

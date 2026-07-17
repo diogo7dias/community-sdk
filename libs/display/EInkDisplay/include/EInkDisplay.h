@@ -2,6 +2,8 @@
 #include <Arduino.h>
 #include <SPI.h>
 
+#include <cstring>
+
 class EInkDisplay {
  public:
   // Constructor with pin configuration
@@ -42,8 +44,10 @@ class EInkDisplay {
 
   // Frame buffer operations
   void clearScreen(uint8_t color = 0xFF) const;
-  void drawImage(const uint8_t* imageData, uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool fromProgmem = false) const;
-  void drawImageTransparent(const uint8_t* imageData, uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool fromProgmem = false) const;
+  void drawImage(const uint8_t* imageData, uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                 bool fromProgmem = false) const;
+  void drawImageTransparent(const uint8_t* imageData, uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                            bool fromProgmem = false) const;
 #ifndef EINK_DISPLAY_SINGLE_BUFFER_MODE
   void swapBuffers();
 #endif
@@ -171,8 +175,32 @@ class EInkDisplay {
   void deepSleep();
 
   // Access to frame buffer
-  uint8_t* getFrameBuffer() const {
-    return frameBuffer;
+  uint8_t* getFrameBuffer() const { return frameBuffer; }
+
+  // Lend the framebuffer's STORAGE (a static .bss array — never heap) to a
+  // memory-hungry build phase. No display calls between lend and return; the
+  // panel keeps showing its last refreshed image. The buffer comes back white,
+  // so the caller must redraw the full screen afterwards. Returns nullptr if
+  // already lent. Single-buffer mode only: in dual-buffer (desktop/test)
+  // builds the display swaps between two buffers mid-loan, so lending is
+  // refused and callers fall back to the heap.
+  uint8_t* lendBuildStorage(uint32_t* sizeOut) {
+#ifdef EINK_DISPLAY_SINGLE_BUFFER_MODE
+    if (buildStorageLent) return nullptr;
+    buildStorageLent = true;
+    if (sizeOut) *sizeOut = MAX_BUFFER_SIZE;
+    return frameBuffer0;
+#else
+    (void)sizeOut;
+    return nullptr;
+#endif
+  }
+  void returnBuildStorage() {
+#ifdef EINK_DISPLAY_SINGLE_BUFFER_MODE
+    if (!buildStorageLent) return;
+    buildStorageLent = false;
+    memset(frameBuffer0, 0xFF, MAX_BUFFER_SIZE);  // white
+#endif
   }
 
   // Save the current framebuffer to a PBM file (desktop/test builds only)
@@ -224,6 +252,8 @@ class EInkDisplay {
   uint8_t _x3InitialFullSyncsRemaining = 0;
   bool _x3ForceFullSyncNext = false;
   uint8_t _x3ForcedConditionPassesNext = 0;
+  // True while frameBuffer0's bytes are lent out via lendBuildStorage().
+  bool buildStorageLent = false;
   // Frame buffer (statically allocated)
   uint8_t frameBuffer0[MAX_BUFFER_SIZE];
   uint8_t* frameBuffer;
@@ -283,16 +313,11 @@ class EInkDisplay {
   void fillPlaneX3(uint8_t ramCmd, uint8_t fillByte);
   // Load all 5 LUT registers (VCOM/WW/BW/WB/BB) in one call. Each pointer
   // must reference a 42-byte LUT bank in PROGMEM/DRAM.
-  void loadLutBankX3(const uint8_t* vcom, const uint8_t* ww,
-                     const uint8_t* bw, const uint8_t* wb,
-                     const uint8_t* bb);
-  void loadLutBankX3WithCdi(uint8_t cdi0, const uint8_t* vcom,
-                            const uint8_t* ww, const uint8_t* bw,
-                            const uint8_t* wb, const uint8_t* bb);
-  void loadLutBankX3WithCdi(uint8_t cdi0, uint8_t cdi1,
-                            const uint8_t* vcom, const uint8_t* ww,
-                            const uint8_t* bw, const uint8_t* wb,
+  void loadLutBankX3(const uint8_t* vcom, const uint8_t* ww, const uint8_t* bw, const uint8_t* wb, const uint8_t* bb);
+  void loadLutBankX3WithCdi(uint8_t cdi0, const uint8_t* vcom, const uint8_t* ww, const uint8_t* bw, const uint8_t* wb,
                             const uint8_t* bb);
+  void loadLutBankX3WithCdi(uint8_t cdi0, uint8_t cdi1, const uint8_t* vcom, const uint8_t* ww, const uint8_t* bw,
+                            const uint8_t* wb, const uint8_t* bb);
   // Power-on if needed, trigger refresh, optionally power-off. The `tag`
   // string is included verbatim in busy-wait log lines.
   void triggerRefreshX3(bool turnOffScreen, const char* tag);
@@ -308,5 +333,5 @@ class EInkDisplay {
 // Factory LUTs extracted from firmware V3.1.9_CH_X4_0117.bin.
 // Uses absolute 2-bit pixel encoding for single-pass grayscale refresh.
 // See EInkDisplay.cpp for encoding details.
-extern const unsigned char lut_factory_fast[];    // 110 bytes, 60 frames, FR=0x44
+extern const unsigned char lut_factory_fast[];     // 110 bytes, 60 frames, FR=0x44
 extern const unsigned char lut_factory_quality[];  // 110 bytes, 50 frames, FR=0x22

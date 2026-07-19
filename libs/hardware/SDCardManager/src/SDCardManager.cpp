@@ -1,5 +1,7 @@
 #include "SDCardManager.h"
 
+#include <esp_task_wdt.h>
+
 namespace {
 constexpr uint8_t SD_CS = 12;
 constexpr uint32_t SPI_FQ = 40000000;
@@ -257,6 +259,12 @@ bool SDCardManager::removeDir(const char* path) {
   auto file = dir.openNextFile();
   char name[128];
   while (file) {
+    // Deleting a large cache tree (a book's sections/ dir can hold hundreds of
+    // files, each a slow SD erase) blocks the calling task well past the 5s task
+    // watchdog. Feed it once per entry; a no-op with a benign error code when the
+    // caller is not a WDT-subscribed task, so it is safe on any task.
+    esp_task_wdt_reset();
+
     String filePath = path;
     if (!filePath.endsWith("/")) {
       filePath += "/";

@@ -46,18 +46,32 @@ int InputManager::getButtonFromADC(const int adcValue, const int ranges[], const
   return -1;
 }
 
+int InputManager::readAdcStable(const int pin) {
+  // Median of three quick reads. Concurrent SD/SPI bursts (e.g. sleep-wallpaper
+  // staging while the user reads a page) couple switching noise onto the button
+  // ADC lines; a single sample can then misclassify a real press as "no button"
+  // — which the user experiences as the device "not listening". The median
+  // discards a lone noisy sample without meaningfully slowing the poll.
+  const int a = analogRead(pin);
+  const int b = analogRead(pin);
+  const int c = analogRead(pin);
+  const int lo = a < b ? a : b;
+  const int hi = a < b ? b : a;
+  return c < lo ? lo : (c > hi ? hi : c);
+}
+
 uint8_t InputManager::getState() {
   uint8_t state = 0;
 
   // Read GPIO1 buttons
-  const int adcValue1 = analogRead(BUTTON_ADC_PIN_1);
+  const int adcValue1 = readAdcStable(BUTTON_ADC_PIN_1);
   const int button1 = getButtonFromADC(adcValue1, ADC_RANGES_1, NUM_BUTTONS_1);
   if (button1 >= 0) {
     state |= (1 << button1);
   }
 
   // Read GPIO2 buttons
-  const int adcValue2 = analogRead(BUTTON_ADC_PIN_2);
+  const int adcValue2 = readAdcStable(BUTTON_ADC_PIN_2);
   const int button2 = getButtonFromADC(adcValue2, ADC_RANGES_2, NUM_BUTTONS_2);
   if (button2 >= 0) {
     state |= (1 << (button2 + 4));
@@ -116,25 +130,15 @@ void InputManager::update() {
   }
 }
 
-bool InputManager::isPressed(const uint8_t buttonIndex) const {
-  return currentState & (1 << buttonIndex);
-}
+bool InputManager::isPressed(const uint8_t buttonIndex) const { return currentState & (1 << buttonIndex); }
 
-bool InputManager::wasPressed(const uint8_t buttonIndex) const {
-  return pressedEvents & (1 << buttonIndex);
-}
+bool InputManager::wasPressed(const uint8_t buttonIndex) const { return pressedEvents & (1 << buttonIndex); }
 
-bool InputManager::wasAnyPressed() const {
-  return pressedEvents > 0;
-}
+bool InputManager::wasAnyPressed() const { return pressedEvents > 0; }
 
-bool InputManager::wasReleased(const uint8_t buttonIndex) const {
-  return releasedEvents & (1 << buttonIndex);
-}
+bool InputManager::wasReleased(const uint8_t buttonIndex) const { return releasedEvents & (1 << buttonIndex); }
 
-bool InputManager::wasAnyReleased() const {
-  return releasedEvents > 0;
-}
+bool InputManager::wasAnyReleased() const { return releasedEvents > 0; }
 
 unsigned long InputManager::getHeldTime() const {
   // Still hold a button
@@ -162,6 +166,4 @@ const char* InputManager::getButtonName(const uint8_t buttonIndex) {
   return "Unknown";
 }
 
-bool InputManager::isPowerButtonPressed() const {
-  return isPressed(BTN_POWER);
-}
+bool InputManager::isPowerButtonPressed() const { return isPressed(BTN_POWER); }

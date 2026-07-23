@@ -21,7 +21,7 @@ class InputManager {
    */
   bool isPressed(uint8_t buttonIndex) const;
 
- /**
+  /**
    * Returns true if the button went from unpressed to pressed between the last two #update() calls.
    *
    * This differs from #isPressed() in that pressing and holding a button will cause this function
@@ -68,7 +68,7 @@ class InputManager {
    */
   unsigned long getLastPressStart() const { return buttonPressStart; }
 
-    /**
+  /**
    * Returns the time the power button has been held
    *
    * @return duration in milliseconds
@@ -97,6 +97,8 @@ class InputManager {
 
  private:
   int getButtonFromADC(int adcValue, const int ranges[], int numButtons);
+  // Median of three fast ADC reads on `pin`, to reject a lone noisy sample.
+  static int readAdcStable(int pin);
 
   uint8_t currentState;
   uint8_t lastState;
@@ -107,7 +109,6 @@ class InputManager {
   unsigned long buttonPressFinish;
   unsigned long powerButtonPressStart;
   unsigned long powerButtonPressFinish;
-
 
   static constexpr int NUM_BUTTONS_1 = 4;
   static const int ADC_RANGES_1[];
